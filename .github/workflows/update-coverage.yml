@@ -1,0 +1,113 @@
+name: Update Coverage
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+
+permissions:
+  contents: write
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Fetch with a token that can push back to the branch
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --group dev
+
+      - name: Run tests
+        working-directory: backend
+        # addopts in pyproject.toml already adds --cov=app, so we only add junitxml here.
+        # Override the html report to avoid writing large artifacts; keep term-missing for logs.
+        run: |
+          uv run pytest \
+            --junitxml=junit.xml \
+            --override-ini="addopts=--cov=app --cov-report=term-missing" \
+            -q
+
+      - name: Generate JSON coverage report
+        working-directory: backend
+        run: uv run coverage json -o coverage.json
+
+      - name: Extract metrics
+        id: metrics
+        working-directory: backend
+        run: |
+          python - <<'EOF'
+          import json, xml.etree.ElementTree as ET, os
+
+          # Coverage percentage
+          with open("coverage.json") as f:
+              cov = json.load(f)
+          pct = round(cov["totals"]["percent_covered"])
+
+          # Passed test count
+          tree = ET.parse("junit.xml")
+          root = tree.getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          total   = int(suite.attrib.get("tests",    0))
+          failed  = int(suite.attrib.get("failures", 0))
+          errored = int(suite.attrib.get("errors",   0))
+          passed  = total - failed - errored
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"coverage={pct}\n")
+              fh.write(f"passed={passed}\n")
+          EOF
+
+      - name: Update README
+        run: |
+          python - <<'EOF'
+          import re
+
+          coverage = "${{ steps.metrics.outputs.coverage }}"
+          passed   = "${{ steps.metrics.outputs.passed }}"
+
+          new_block = (
+              "<!-- coverage-start -->\n"
+              f"- `pytest` coverage (`backend/app`): **{coverage}%**\n"
+              f"- Last measured from local run: **{passed} passed**\n"
+              "<!-- coverage-end -->"
+          )
+
+          with open("README.md", "r") as f:
+              content = f.read()
+
+          content = re.sub(
+              r"<!-- coverage-start -->.*?<!-- coverage-end -->",
+              new_block,
+              content,
+              flags=re.DOTALL,
+          )
+
+          with open("README.md", "w") as f:
+              f.write(content)
+          EOF
+
+      - name: Commit updated README
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet README.md || (
+            git add README.md
+            git commit -m "chore: update test coverage [skip ci]"
+            git push
+          )

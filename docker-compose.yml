@@ -1,0 +1,88 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Budget Tracker — full-stack Docker Compose
+#
+# Services:
+#   db   — PostgreSQL 16 (data volume: postgres_data)
+#   api  — FastAPI backend  (runs migrations on start)
+#   web  — React frontend   (Nginx, generates env-config.js at start)
+#
+# Quick start:
+#   cp backend/.env.example backend/.env   # then edit as needed
+#   docker compose up --build
+#
+# Ports exposed to the host:
+#   5432  → PostgreSQL  (optional; comment out if you don't need direct access)
+#   8000  → FastAPI API
+#   3000  → React frontend
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-budget}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-budget_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-budget_tracker}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-budget} -d ${POSTGRES_DB:-budget_tracker}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── FastAPI backend ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-budget}:${POSTGRES_PASSWORD:-budget_secret}@db:5432/${POSTGRES_DB:-budget_tracker}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-budget-tracker}
+      BASE_CURRENCY: ${BASE_CURRENCY:-USD}
+      FRANKFURTER_BASE_URL: ${FRANKFURTER_BASE_URL:-https://api.frankfurter.app}
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-UTC}
+      LOCAL_AUTH_ENABLED: ${LOCAL_AUTH_ENABLED:-false}
+      LOCAL_AUTH_SECRET: ${LOCAL_AUTH_SECRET:-change-me-in-production}
+      DEBUG: ${DEBUG:-false}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── React frontend (Nginx) ──────────────────────────────────────────────────
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8000}
+      OIDC_AUTHORITY: ${OIDC_AUTHORITY:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-budget-tracker}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-http://localhost:3000/callback}
+      OIDC_POST_LOGOUT_REDIRECT_URI: ${OIDC_POST_LOGOUT_REDIRECT_URI:-http://localhost:3000/}
+      LOCAL_AUTH_ENABLED: ${LOCAL_AUTH_ENABLED:-false}
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
