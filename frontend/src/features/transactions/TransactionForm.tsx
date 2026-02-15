@@ -194,7 +194,7 @@ const TransactionForm: React.FC<Props> = ({ onSubmit, onCancel, loading, default
             <CategoryAutocomplete
               value={field.value || null}
               onChange={(id) => field.onChange(id ?? '')}
-              transactionType={transactionType === 'transfer' ? 'both' : transactionType}
+              transactionType={transactionType}
               label="Category (optional)"
             />
           )}
