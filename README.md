@@ -12,7 +12,7 @@ Full-stack personal finance app with a FastAPI backend, React frontend, and Post
 ## Backend Test Coverage
 
 <!-- coverage-start -->
-- `pytest` coverage (`backend/app`): **88%**
+- `pytest` coverage (`backend/app`): **82%**
 - Last measured from local run: **141 passed**
 <!-- coverage-end -->
 
